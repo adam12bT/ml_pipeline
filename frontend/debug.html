@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/><title>Pipeline Debug</title>
+<style>body{font-family:monospace;padding:20px;background:#f8fafc}
+.box{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:12px 0}
+button{padding:8px 18px;background:#6366f1;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;margin:4px}
+input{padding:8px;border:1px solid #ccc;border-radius:6px;width:100%;margin:6px 0}
+#log{background:#1e293b;color:#a3e635;padding:16px;border-radius:8px;font-size:12px;height:300px;overflow-y:auto;white-space:pre-wrap}
+#result-dump{background:#f1f5f9;padding:16px;border-radius:8px;font-size:11px;max-height:400px;overflow-y:auto;white-space:pre-wrap;display:none}
+</style></head>
+<body>
+<h2>🔍 Pipeline Debug Tool</h2>
+
+<div class="box">
+  <b>Step 1: Set API URL</b><br>
+  <input id="api-url" value="http://localhost:8000" />
+  <button onclick="testHealth()">Test /health</button>
+</div>
+
+<div class="box">
+  <b>Step 2: Upload a file</b><br>
+  <input type="file" id="file-pick" accept=".csv,.xlsx,.json,.parquet"/>
+  <button onclick="doUpload()">Upload & Run</button>
+</div>
+
+<div class="box">
+  <b>Step 3: Check a run manually</b><br>
+  <input id="run-id-input" placeholder="paste run_id here"/>
+  <button onclick="checkStatus()">Check Status</button>
+</div>
+
+<div class="box">
+  <b>Console log:</b>
+  <div id="log">Ready.\n</div>
+</div>
+
+<div class="box">
+  <b>Last result data (when completed):</b>
+  <div id="result-dump"></div>
+</div>
+
+<script>
+let currentRunId = null;
+let pollTimer = null;
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += new Date().toISOString().slice(11,19) + ' ' + msg + '\n';
+  el.scrollTop = el.scrollHeight;
+}
+
+function api() { return document.getElementById('api-url').value.trim(); }
+
+async function testHealth() {
+  log('GET ' + api() + '/health ...');
+  try {
+    const r = await fetch(api() + '/health');
+    const d = await r.json();
+    log('HEALTH OK: ' + JSON.stringify(d));
+  } catch(e) { log('HEALTH ERROR: ' + e.message); }
+}
+
+async function doUpload() {
+  const f = document.getElementById('file-pick').files[0];
+  if (!f) { log('No file selected'); return; }
+  log('Uploading: ' + f.name + ' (' + (f.size/1e6).toFixed(2) + ' MB)');
+  try {
+    const form = new FormData();
+    form.append('file', f);
+    const r = await fetch(api() + '/upload', {method:'POST', body:form});
+    const d = await r.json();
+    log('UPLOAD response: ' + JSON.stringify(d));
+    if (d.run_id || d.id) {
+      currentRunId = d.run_id || d.id;
+      document.getElementById('run-id-input').value = currentRunId;
+      log('Starting poll for run_id: ' + currentRunId);
+      startPoll(currentRunId);
+    } else {
+      log('ERROR: no run_id in response!');
+    }
+  } catch(e) { log('UPLOAD ERROR: ' + e.message); }
+}
+
+function startPoll(id) {
+  if (pollTimer) clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch(api() + '/status/' + id);
+      const d = await r.json();
+      log('STATUS: ' + d.status + ' (' + (d.progress_pct||0) + '%) — result present: ' + (!!d.result));
+      if (d.status === 'completed') {
+        clearInterval(pollTimer);
+        log('=== COMPLETED ===');
+        log('result keys: ' + (d.result ? Object.keys(d.result).join(', ') : 'NULL - NO RESULT!'));
+        const dump = document.getElementById('result-dump');
+        dump.style.display = 'block';
+        dump.textContent = JSON.stringify(d, null, 2).slice(0, 5000) + '\n... (truncated)';
+      }
+      if (d.status === 'failed') {
+        clearInterval(pollTimer);
+        log('=== FAILED: ' + d.error);
+      }
+    } catch(e) { log('POLL ERROR: ' + e.message); }
+  }, 2500);
+}
+
+async function checkStatus() {
+  const id = document.getElementById('run-id-input').value.trim();
+  if (!id) { log('No run_id entered'); return; }
+  log('Checking status for: ' + id);
+  try {
+    const r = await fetch(api() + '/status/' + id);
+    const d = await r.json();
+    log('FULL RESPONSE: ' + JSON.stringify(d).slice(0, 500));
+    log('status: ' + d.status);
+    log('result is: ' + (d.result === null ? 'null' : d.result === undefined ? 'UNDEFINED' : 'object with keys: ' + Object.keys(d.result).join(', ')));
+    const dump = document.getElementById('result-dump');
+    dump.style.display = 'block';
+    dump.textContent = JSON.stringify(d, null, 2).slice(0, 8000);
+  } catch(e) { log('ERROR: ' + e.message); }
+}
+</script>
+</body>
+</html>

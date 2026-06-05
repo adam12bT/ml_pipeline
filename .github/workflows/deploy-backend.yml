@@ -1,0 +1,52 @@
+name: Deploy Backend to Render
+
+# ── When to run ────────────────────────────────────────────────────────────────
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"   # Only run when backend files change
+  workflow_dispatch:   # Allow manual trigger
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend → Render
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Trigger Render Deploy Hook
+        # Render gives you a webhook URL — when you call it, it redeploys
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          echo "🚀 Triggering Render deployment..."
+          curl -s -X POST "$RENDER_DEPLOY_HOOK" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            -w "\nHTTP Status: %{http_code}\n"
+          echo "✅ Render deployment triggered!"
+
+      - name: Wait for deployment
+        run: |
+          echo "⏳ Waiting 30 seconds for Render to start building..."
+          sleep 30
+
+      - name: Health check
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+        run: |
+          echo "🔍 Checking backend health..."
+          for i in 1 2 3 4 5; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$RENDER_URL/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ Backend is healthy! (attempt $i)"
+              exit 0
+            fi
+            echo "⏳ Not ready yet (attempt $i) — waiting 20s..."
+            sleep 20
+          done
+          echo "⚠️ Backend health check timed out — check Render dashboard"
+          exit 1

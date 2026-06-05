@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: ai-pipeline-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SUPABASE_URL
+        sync: false          # Set this in Render dashboard
+      - key: SUPABASE_ANON_KEY
+        sync: false          # Set this in Render dashboard
+      - key: SPACE_1_URL
+        sync: false          # https://your-username-ai-pipeline-ingest.hf.space
+      - key: SPACE_2_URL
+        sync: false          # https://your-username-ai-pipeline-clean.hf.space
+      - key: SPACE_3_URL
+        sync: false          # https://your-username-ai-pipeline-train.hf.space
+      - key: SPACE_4_URL
+        sync: false          # https://your-username-ai-pipeline-explain.hf.space
+      - key: HF_TOKEN
+        sync: false          # Optional: your Hugging Face token
+      - key: MAX_FILE_MB
+        value: "200"

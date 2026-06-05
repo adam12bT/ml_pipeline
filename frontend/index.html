@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>AI Dataset Intelligence Pipeline</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  :root{
+    --primary:#6366f1;--primary-dark:#4f46e5;--primary-light:#e0e7ff;
+    --success:#22c55e;--warning:#f59e0b;--danger:#ef4444;
+    --bg:#f8fafc;--card:#fff;--text:#1e293b;--muted:#64748b;--border:#e2e8f0;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
+  .header{background:linear-gradient(135deg,var(--primary),#8b5cf6);color:#fff;padding:22px 32px;display:flex;align-items:center;gap:16px}
+  .header h1{font-size:22px;font-weight:700}
+  .header p{font-size:13px;opacity:.85;margin-top:2px}
+  .main{max-width:980px;margin:0 auto;padding:32px 16px;display:flex;flex-direction:column;gap:24px}
+  .card{background:var(--card);border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.07);padding:28px}
+  .card-title{font-size:16px;font-weight:700;color:var(--primary);margin-bottom:18px}
+  .drop{border:2.5px dashed var(--border);border-radius:12px;padding:48px 24px;text-align:center;cursor:pointer;transition:all .2s;background:var(--bg)}
+  .drop:hover,.drop.over{border-color:var(--primary);background:var(--primary-light)}
+  .drop .icon{font-size:48px;margin-bottom:12px}
+  .drop h3{font-size:18px;font-weight:600;margin-bottom:6px}
+  .drop p{color:var(--muted);font-size:14px}
+  .btn{display:inline-flex;align-items:center;gap:8px;padding:10px 22px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;border:none;transition:all .15s}
+  .btn-primary{background:var(--primary);color:#fff}
+  .btn-primary:hover{background:var(--primary-dark);transform:translateY(-1px)}
+  .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none}
+  .btn-outline{background:#fff;color:var(--primary);border:2px solid var(--primary)}
+  .btn-outline:hover{background:var(--primary-light)}
+  .prog-wrap{background:var(--border);border-radius:99px;height:10px;overflow:hidden;margin:10px 0}
+  .prog-bar{height:100%;background:linear-gradient(90deg,var(--primary),#8b5cf6);border-radius:99px;transition:width .5s ease}
+  .prog-labels{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}
+  .stages{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .pill{display:flex;align-items:center;gap:5px;font-size:12px;font-weight:500;padding:5px 12px;border-radius:99px}
+  .pill-done{background:#dcfce7;color:#16a34a}
+  .pill-active{background:var(--primary-light);color:var(--primary)}
+  .pill-pending{background:var(--border);color:var(--muted)}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin-bottom:18px}
+  .stat{background:var(--bg);border-radius:10px;padding:14px;text-align:center}
+  .stat-val{font-size:20px;font-weight:700}
+  .stat-lbl{font-size:11px;color:var(--muted);margin-top:3px}
+  .tbl{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{background:var(--bg);padding:10px 12px;text-align:left;font-weight:600;color:var(--muted)}
+  td{padding:9px 12px;border-bottom:1px solid var(--border)}
+  tr:last-child td{border:none}
+  tr:hover td{background:var(--bg)}
+  code{background:#f1f5f9;padding:2px 6px;border-radius:4px;font-size:11px;font-family:monospace}
+  .tabs{display:flex;gap:4px;border-bottom:2px solid var(--border);margin-bottom:18px}
+  .tab{padding:9px 16px;cursor:pointer;font-size:14px;font-weight:500;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-2px;border-radius:6px 6px 0 0;transition:all .15s}
+  .tab:hover{color:var(--primary);background:var(--primary-light)}
+  .tab.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:700}
+  .badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:700}
+  .bdg-purple{background:var(--primary-light);color:var(--primary)}
+  .bdg-green{background:#dcfce7;color:#16a34a}
+  .bdg-yellow{background:#fef9c3;color:#854d0e}
+  .bdg-red{background:#fee2e2;color:#b91c1c}
+  .alert{padding:12px 16px;border-radius:8px;font-size:14px;display:flex;align-items:flex-start;gap:10px;margin-bottom:14px}
+  .alert-error{background:#fee2e2;color:#b91c1c}
+  .alert-success{background:#dcfce7;color:#16a34a}
+  .alert-info{background:var(--primary-light);color:var(--primary)}
+  .imp-bg{background:var(--primary-light);border-radius:4px;height:12px;overflow:hidden;flex:1}
+  .imp-fill{background:var(--primary);height:100%;border-radius:4px;transition:width .5s}
+  .ring{position:relative;display:inline-flex;align-items:center;justify-content:center;width:76px;height:76px}
+  .ring svg{position:absolute;top:0;left:0}
+  .ring-val{font-size:17px;font-weight:700;z-index:1}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+const API = window.BACKEND_URL || "http://localhost:8000";
+
+const STAGES = [
+  {key:"ingesting",  label:"Ingesting",  icon:"📂"},
+  {key:"cleaning",   label:"Cleaning",   icon:"🧹"},
+  {key:"training",   label:"Training",   icon:"🏋️"},
+  {key:"reporting",  label:"Report",     icon:"📄"},
+  {key:"completed",  label:"Done",       icon:"✅"},
+];
+const PROG = {pending:5,ingesting:20,cleaning:45,training:75,reporting:92,completed:100,failed:0};
+
+const Badge = ({text,type="purple"}) =>
+  <span className={`badge bdg-${type}`}>{text}</span>;
+
+const Stat = ({value,label,color}) => (
+  <div className="stat">
+    <div className="stat-val" style={color?{color}:{}}>{value}</div>
+    <div className="stat-lbl">{label}</div>
+  </div>
+);
+
+const Alert = ({type,children}) => (
+  <div className={`alert alert-${type}`}>
+    <span>{{error:"❌",success:"✅",info:"ℹ️"}[type]}</span>
+    <span>{children}</span>
+  </div>
+);
+
+function ConfRing({pct}){
+  const r=33,c=2*Math.PI*r,dash=c*(pct/100);
+  const col=pct>=80?"#22c55e":pct>=60?"#f59e0b":"#ef4444";
+  return(
+    <div className="ring">
+      <svg width="76" height="76" viewBox="0 0 76 76">
+        <circle cx="38" cy="38" r={r} fill="none" stroke="#e0e7ff" strokeWidth="7"/>
+        <circle cx="38" cy="38" r={r} fill="none" stroke={col} strokeWidth="7"
+          strokeDasharray={`${dash} ${c}`} strokeLinecap="round"
+          transform="rotate(-90 38 38)"/>
+      </svg>
+      <span className="ring-val" style={{color:col}}>{pct}%</span>
+    </div>
+  );
+}
+
+function UploadCard({onUpload}){
+  const [drag,setDrag]=React.useState(false);
+  const [file,setFile]=React.useState(null);
+  const [going,setGoing]=React.useState(false);
+  const ref=React.useRef();
+  const allowed=[".csv",".xlsx",".xls",".json",".parquet"];
+  const pick=(f)=>{
+    const ext=f.name.slice(f.name.lastIndexOf(".")).toLowerCase();
+    if(!allowed.includes(ext)){alert(`Unsupported: ${ext}`);return;}
+    setFile(f);
+  };
+  return(
+    <div className="card">
+      <div className="card-title">🚀 Upload Your Dataset</div>
+      <div className={`drop ${drag?"over":""}`}
+        onDragOver={e=>{e.preventDefault();setDrag(true)}}
+        onDragLeave={()=>setDrag(false)}
+        onDrop={e=>{e.preventDefault();setDrag(false);e.dataTransfer.files[0]&&pick(e.dataTransfer.files[0])}}
+        onClick={()=>!file&&ref.current.click()}>
+        <input ref={ref} type="file" style={{display:"none"}}
+          accept={allowed.join(",")}
+          onChange={e=>e.target.files[0]&&pick(e.target.files[0])}/>
+        {file?(
+          <div>
+            <div className="icon">📊</div>
+            <h3>{file.name}</h3>
+            <p style={{color:"var(--success)",marginBottom:16}}>{(file.size/1e6).toFixed(2)} MB — ready</p>
+            <div style={{display:"flex",gap:10,justifyContent:"center"}}>
+              <button className="btn btn-primary" disabled={going}
+                onClick={e=>{e.stopPropagation();setGoing(true);onUpload(file);}}>
+                {going?"⏳ Starting…":"⚡ Run AI Pipeline"}
+              </button>
+              <button className="btn btn-outline"
+                onClick={e=>{e.stopPropagation();setFile(null);setGoing(false);}}>
+                Change File
+              </button>
+            </div>
+          </div>
+        ):(
+          <div>
+            <div className="icon">☁️</div>
+            <h3>Drag & drop your dataset</h3>
+            <p>or <strong style={{color:"var(--primary)"}}>click to browse</strong></p>
+            <p style={{marginTop:8,fontSize:13}}>CSV · Excel · JSON · Parquet · up to 200 MB</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ProgressCard({stage}){
+  const pct=PROG[stage]||5;
+  return(
+    <div className="card">
+      <div className="card-title">📡 Pipeline Progress</div>
+      <div className="prog-labels"><span>{stage||"Initialising…"}</span><span>{pct}%</span></div>
+      <div className="prog-wrap">
+        <div className="prog-bar" style={{width:`${pct}%`}}/>
+      </div>
+      <div className="stages">
+        {STAGES.map(s=>{
+          const sp=PROG[s.key]||0;
+          const cls=sp<pct?"pill-done":sp===pct?"pill-active":"pill-pending";
+          return <div key={s.key} className={`pill ${cls}`}>{s.icon} {s.label}</div>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ResultsPanel({result}){
+  const [tab,setTab]=React.useState("overview");
+  const tabs=[
+    {k:"overview",l:"📊 Overview"},
+    {k:"target",  l:"🎯 Target"},
+    {k:"cleaning",l:"🧹 Cleaning"},
+    {k:"models",  l:"🏋️ Models"},
+    {k:"features",l:"🔬 Features"},
+  ];
+  const ing=result?.ingestion||{};
+  const cln=result?.cleaning||{};
+  const trn=result?.training||{};
+  return(
+    <div className="card">
+      <div className="card-title">📋 Analysis Results</div>
+      <div className="tabs">
+        {tabs.map(t=>(
+          <div key={t.k} className={`tab ${tab===t.k?"on":""}`}
+            onClick={()=>setTab(t.k)}>{t.l}</div>
+        ))}
+      </div>
+      {tab==="overview" && <OverviewTab ing={ing}/>}
+      {tab==="target"   && <TargetTab td={ing.target_detection||{}}/>}
+      {tab==="cleaning" && <CleaningTab cr={cln.cleaning_report||{}} er={cln.engineering_report||{}}/>}
+      {tab==="models"   && <ModelsTab mr={trn}/>}
+      {tab==="features" && <FeaturesTab imp={trn.feature_importances||{}}/>}
+    </div>
+  );
+}
+
+function OverviewTab({ing}){
+  const s=ing.schema||{};
+  const q=ing.quality_score||0;
+  const qc=q>=80?"var(--success)":q>=60?"var(--warning)":"var(--danger)";
+  const cols=s.columns||{};
+  return(
+    <div>
+      <div className="stats">
+        <Stat value={(ing.rows||0).toLocaleString()} label="Total Rows"/>
+        <Stat value={ing.columns||0} label="Columns"/>
+        <Stat value={`${(s.memory_mb||0).toFixed(1)} MB`} label="Memory"/>
+        <Stat value={`${q}/100`} label="Quality Score" color={qc}/>
+        <Stat value={`${(s.duplicate_pct||0).toFixed(1)}%`} label="Duplicates"/>
+      </div>
+      {Object.keys(cols).length>0&&(
+        <div className="tbl">
+          <table>
+            <thead><tr><th>Column</th><th>Type</th><th>Nulls</th><th>Unique</th><th>Flags</th></tr></thead>
+            <tbody>
+              {Object.entries(cols).map(([col,info])=>(
+                <tr key={col}>
+                  <td><code>{col}</code></td>
+                  <td><Badge text={info.inferred_type}/></td>
+                  <td style={{color:info.null_pct>20?"var(--danger)":"var(--success)"}}>
+                    {(info.null_pct||0).toFixed(1)}%
+                  </td>
+                  <td>{(info.unique_count||0).toLocaleString()}</td>
+                  <td>
+                    {info.has_outliers&&<Badge text="⚠ Outliers" type="yellow"/>}
+                    {info.is_id_like&&<Badge text="🆔 ID" type="red"/>}
+                    {info.is_constant&&<Badge text="⬛ Constant" type="red"/>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TargetTab({td}){
+  const conf=Math.round((td.confidence||0)*100);
+  const scores=[
+    {l:"Keyword Heuristics", v:td.scores?.h||0},
+    {l:"Statistical Signal",  v:td.scores?.s||0},
+    {l:"Column Position",     v:td.scores?.p||0},
+  ];
+  return(
+    <div>
+      <div style={{display:"flex",gap:20,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
+        <ConfRing pct={conf}/>
+        <div>
+          <div style={{fontSize:12,color:"var(--muted)",marginBottom:4}}>Predicted Target</div>
+          <div style={{fontSize:24,fontWeight:800,color:"var(--primary)"}}>{td.predicted_target||"—"}</div>
+          <Badge text={(td.problem_type||"").replace(/_/g," ")}/>
+        </div>
+      </div>
+      <p style={{fontSize:14,marginBottom:18,lineHeight:1.7}}><strong>Reasoning:</strong> {td.reasoning||"—"}</p>
+      {scores.map(s=>(
+        <div key={s.l} style={{marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:13,marginBottom:4}}>
+            <span>{s.l}</span><strong>{(s.v*100).toFixed(0)}%</strong>
+          </div>
+          <div className="imp-bg"><div className="imp-fill" style={{width:`${s.v*100}%`}}/></div>
+        </div>
+      ))}
+      {td.alternative_targets?.length>0&&(
+        <p style={{marginTop:12,fontSize:13}}>
+          <strong>Alternatives: </strong>
+          {td.alternative_targets.map(a=><Badge key={a} text={a}/>)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CleaningTab({cr,er}){
+  return(
+    <div>
+      <div className="stats">
+        <Stat value={(cr.duplicates_removed||0).toLocaleString()} label="Duplicates Removed"/>
+        <Stat value={(cr.nulls_imputed||0).toLocaleString()} label="Nulls Filled"/>
+        <Stat value={(cr.outliers_handled||0).toLocaleString()} label="Outliers Clipped"/>
+        <Stat value={((cr.rows_before||0)-(cr.rows_after||0)).toLocaleString()} label="Rows Removed"/>
+      </div>
+      <div className="stats" style={{marginTop:0}}>
+        <Stat value={er.original_features||0} label="Original Features"/>
+        <Stat value={er.engineered_features||0} label="Final Features"/>
+      </div>
+      {cr.operations?.length>0&&(
+        <div className="tbl">
+          <table>
+            <thead><tr><th>Operation</th><th>Column</th><th>Detail</th></tr></thead>
+            <tbody>
+              {cr.operations.map((op,i)=>(
+                <tr key={i}>
+                  <td><code>{op.op}</code></td>
+                  <td>{op.column||"—"}</td>
+                  <td style={{fontSize:12,color:"var(--muted)"}}>{op.detail||op.filled||op.rows_removed||""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {(!cr.operations||cr.operations.length===0)&&(
+        <p style={{color:"var(--muted)",fontSize:13}}>Data was already clean — no operations needed.</p>
+      )}
+    </div>
+  );
+}
+
+function ModelsTab({mr}){
+  if(!mr?.models?.length) return <p style={{color:"var(--muted)"}}>No model data yet.</p>;
+  return(
+    <div>
+      <Alert type="success">
+        Best model: <strong>{mr.best_model}</strong> — score <strong>{(mr.best_score||0).toFixed(4)}</strong>
+      </Alert>
+      <div className="tbl">
+        <table>
+          <thead><tr><th>Model</th><th>Accuracy</th><th>CV (mean ± std)</th><th>Time</th></tr></thead>
+          <tbody>
+            {mr.models.map(m=>{
+              const score=m.roc_auc||m.accuracy||m.r2||m.f1||0;
+              const best=m.model_name===mr.best_model;
+              return(
+                <tr key={m.model_name} style={best?{background:"#f0fdf4",fontWeight:700}:{}}>
+                  <td>{best&&"🏆 "}{m.model_name}</td>
+                  <td>{(m.accuracy||score).toFixed(4)}</td>
+                  <td>{(m.cv_score_mean||0).toFixed(4)} ± {(m.cv_score_std||0).toFixed(4)}</td>
+                  <td>{(m.training_time_seconds||0).toFixed(1)}s</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function FeaturesTab({imp}){
+  const total=Object.values(imp).reduce((a,b)=>a+b,0)||1;
+  const sorted=Object.entries(imp).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  if(sorted.length===0) return <p style={{color:"var(--muted)"}}>No feature importance data.</p>;
+  return(
+    <div>
+      <div className="tbl">
+        <table>
+          <thead><tr><th>Feature</th><th>Importance</th><th>%</th></tr></thead>
+          <tbody>
+            {sorted.map(([feat,score])=>{
+              const pct=score/total*100;
+              return(
+                <tr key={feat}>
+                  <td><code>{feat}</code></td>
+                  <td><div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <div className="imp-bg"><div className="imp-fill" style={{width:`${Math.min(pct*3,100)}%`}}/></div>
+                  </div></td>
+                  <td>{pct.toFixed(1)}%</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// ROOT APP
+// THE KEY INSIGHT: /status never returns result during polling.
+// So when status==="completed", we make a SEPARATE fetch to
+// /result/{id} to get the actual result data.
+// ─────────────────────────────────────────────────────────────────
+function App(){
+  const [page,     setPage]    = React.useState("landing");
+  const [stage,    setStage]   = React.useState(null);
+  const [result,   setResult]  = React.useState(null);
+  const [runId,    setRunId]   = React.useState(null);
+  const [errorMsg, setErrMsg]  = React.useState(null);
+  const timer  = React.useRef(null);
+  const pageRef= React.useRef("landing");
+
+  const goTo = (p) => { pageRef.current=p; setPage(p); };
+
+  React.useEffect(()=>()=>{ clearInterval(timer.current); },[]);
+
+  const reset = () => {
+    clearInterval(timer.current);
+    timer.current=null;
+    setStage(null);
+    setResult(null);
+    setRunId(null);
+    setErrMsg(null);
+    goTo("landing");
+  };
+
+  // ── Fetch the result from the dedicated /result/:id endpoint ──
+  const fetchResult = async (id) => {
+    console.log("[RESULT] fetching /result/" + id);
+    try {
+      const res  = await fetch(`${API}/result/${id}`);
+      if(!res.ok) throw new Error("result fetch failed: " + res.status);
+      const data = await res.json();
+      console.log("[RESULT] got keys:", Object.keys(data));
+
+      // Backend might wrap it or return it flat
+      const result =
+        data.result       ||   // {result: {...}}
+        data.result_json  ||   // {result_json: {...}}
+        (data.ingestion ? data : null);  // flat — the result IS the object
+
+      console.log("[RESULT] parsed result:", !!result, result ? Object.keys(result) : "null");
+      return result;
+    } catch(e) {
+      console.error("[RESULT] error:", e);
+      return null;
+    }
+  };
+
+  const startPoll = (id) => {
+    if(timer.current){ clearTimeout(timer.current); timer.current=null; }
+
+    const poll = async () => {
+      if(pageRef.current !== "running") return;
+      try {
+        const res = await fetch(`${API}/status/${id}`);
+        if(!res.ok){ timer.current = setTimeout(poll, 2000); return; }
+        const data = await res.json();
+
+        console.log("[POLL]", data.status, "stage:", data.current_stage);
+        setStage(data.status);
+
+        if(data.status === "completed"){
+          // Always fetch from /result/:id — guaranteed to have the data
+          // (status endpoint only includes result on the exact completed tick
+          //  which can be missed; /result/:id always works once completed)
+          console.log("[DONE] fetching result from /result/" + id);
+          try {
+            const rRes = await fetch(`${API}/result/${id}`);
+            if(!rRes.ok) throw new Error("result endpoint returned " + rRes.status);
+            const rData = await rRes.json();
+            console.log("[DONE] result keys:", Object.keys(rData));
+            // /result/:id returns the result object directly (see backend)
+            setResult(rData);
+          } catch(e) {
+            console.error("[DONE] could not load result:", e.message);
+            setResult(null);
+          }
+          goTo("completed");
+
+        } else if(data.status === "failed"){
+          setErrMsg(data.error || "Pipeline failed.");
+          goTo("failed");
+
+        } else {
+          timer.current = setTimeout(poll, 2000);
+        }
+      } catch(e) {
+        console.warn("[POLL] fetch error, retrying:", e.message);
+        timer.current = setTimeout(poll, 3000);
+      }
+    };
+
+    poll();
+  };
+
+  const upload = async (file) => {
+    setErrMsg(null);
+    setResult(null);
+    setStage(null);
+    goTo("running");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res  = await fetch(`${API}/upload`, {method:"POST",body:form});
+      if(!res.ok){ const e=await res.json(); throw new Error(e.detail||"Upload failed"); }
+      const data = await res.json();
+      const id   = data.run_id || data.id;
+      setRunId(id);
+      startPoll(id);
+    } catch(e) {
+      setErrMsg(e.message);
+      goTo("failed");
+    }
+  };
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",minHeight:"100vh"}}>
+      <header className="header">
+        <div style={{fontSize:32}}>🤖</div>
+        <div>
+          <h1>AI Dataset Intelligence Pipeline</h1>
+          <p>Upload any dataset · Auto-clean · Detect target · Train models · Get a report · Completely free</p>
+        </div>
+      </header>
+
+      <main className="main">
+
+        {page==="landing" && <>
+          <UploadCard onUpload={upload}/>
+          <div className="card" style={{textAlign:"center",color:"var(--muted)"}}>
+            <div style={{fontSize:44,marginBottom:12}}>💡</div>
+            <h3 style={{marginBottom:8,color:"var(--text)"}}>How it works</h3>
+            <p style={{maxWidth:500,margin:"0 auto",lineHeight:1.8,fontSize:14}}>
+              Upload any CSV, Excel, JSON or Parquet file. The AI automatically
+              understands your data, cleans it, figures out what you want to predict,
+              engineers features, trains multiple ML models, and gives you a full report.
+            </p>
+            <div style={{display:"flex",justifyContent:"center",gap:12,marginTop:20,flexWrap:"wrap"}}>
+              {[
+                {icon:"📂",label:"Ingest & Profile",sub:"Stage 1"},
+                {icon:"🧹",label:"Clean & Engineer",sub:"Stage 2"},
+                {icon:"🏋️",label:"Train Models",sub:"Stage 3"},
+                {icon:"📄",label:"Explain & Report",sub:"Stage 4"},
+              ].map(s=>(
+                <div key={s.label} style={{background:"var(--bg)",borderRadius:10,padding:"14px 20px",textAlign:"center",minWidth:120}}>
+                  <div style={{fontSize:28}}>{s.icon}</div>
+                  <div style={{fontWeight:600,fontSize:13,marginTop:6}}>{s.label}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{s.sub}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>}
+
+        {page==="running" && <ProgressCard stage={stage}/>}
+
+        {page==="failed" && (
+          <div className="card">
+            <Alert type="error">{errorMsg||"Pipeline failed."}</Alert>
+            <button className="btn btn-primary" onClick={reset}>↩ Try Again</button>
+          </div>
+        )}
+
+        {page==="completed" && <>
+          <div className="card" style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+            <span style={{fontWeight:700,color:"var(--success)"}}>✅ Pipeline Complete!</span>
+            <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+              <a href={`${API}/report/${runId}/html`} target="_blank" rel="noreferrer">
+                <button className="btn btn-primary">📄 HTML Report</button>
+              </a>
+              <a href={`${API}/result/${runId}`} target="_blank" rel="noreferrer">
+                <button className="btn btn-outline">{"{}"} JSON</button>
+              </a>
+              <button className="btn btn-outline" onClick={reset}>↩ New Upload</button>
+            </div>
+          </div>
+
+          {result
+            ? <ResultsPanel result={result}/>
+            : <div className="card">
+                <Alert type="info">
+                  Pipeline complete! Result data could not be loaded from <code>/result/{runId}</code>.
+                  Use the JSON button above to view results directly.
+                </Alert>
+              </div>
+          }
+        </>}
+
+      </main>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
