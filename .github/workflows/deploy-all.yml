@@ -1,28 +1,12 @@
 name: Deploy Everything
 
 on:
-  workflow_dispatch:
-    inputs:
-      confirm:
-        description: 'Type YES to deploy everything'
-        required: true
-        default: 'NO'
+  push:
+    branches: [main]   # ← runs automatically on every push to main
 
 jobs:
 
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Confirm deployment
-        run: |
-          if [ "${{ github.event.inputs.confirm }}" != "YES" ]; then
-            echo "❌ You must type YES to confirm full deployment"
-            exit 1
-          fi
-          echo "✅ Full deployment confirmed"
-
   deploy-space-1:
-    needs: check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -42,15 +26,17 @@ jobs:
           fi
           cd hf-space-1
           git add .
-          git diff --cached --quiet || git commit -m "Full deploy — $(date '+%Y-%m-%d %H:%M')"
+          git diff --cached --quiet || git commit -m "Auto deploy — $(date '+%Y-%m-%d %H:%M')"
           git push
           echo "✅ Space 1 done"
 
   deploy-space-2:
-    needs: check
+    needs: deploy-space-1
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Wait
+        run: sleep 15
       - name: Deploy Space 2
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -67,15 +53,17 @@ jobs:
           fi
           cd hf-space-2
           git add .
-          git diff --cached --quiet || git commit -m "Full deploy — $(date '+%Y-%m-%d %H:%M')"
+          git diff --cached --quiet || git commit -m "Auto deploy — $(date '+%Y-%m-%d %H:%M')"
           git push
           echo "✅ Space 2 done"
 
   deploy-space-3:
-    needs: check
+    needs: deploy-space-2
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Wait
+        run: sleep 15
       - name: Deploy Space 3
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -92,15 +80,17 @@ jobs:
           fi
           cd hf-space-3
           git add .
-          git diff --cached --quiet || git commit -m "Full deploy — $(date '+%Y-%m-%d %H:%M')"
+          git diff --cached --quiet || git commit -m "Auto deploy — $(date '+%Y-%m-%d %H:%M')"
           git push
           echo "✅ Space 3 done"
 
   deploy-space-4:
-    needs: check
+    needs: deploy-space-3
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Wait
+        run: sleep 15
       - name: Deploy Space 4
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -117,12 +107,12 @@ jobs:
           fi
           cd hf-space-4
           git add .
-          git diff --cached --quiet || git commit -m "Full deploy — $(date '+%Y-%m-%d %H:%M')"
+          git diff --cached --quiet || git commit -m "Auto deploy — $(date '+%Y-%m-%d %H:%M')"
           git push
           echo "✅ Space 4 done"
 
   deploy-backend:
-    needs: check
+    needs: deploy-space-4
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +124,7 @@ jobs:
           echo "✅ Render deploy triggered"
 
   deploy-frontend:
-    needs: check
+    needs: deploy-space-4
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -151,10 +141,10 @@ jobs:
           echo "✅ Vercel deployed"
 
   summary:
-    needs: [deploy-space-1, deploy-space-2, deploy-space-3, deploy-space-4, deploy-backend, deploy-frontend]
+    needs: [deploy-backend, deploy-frontend]
     runs-on: ubuntu-latest
     steps:
-      - name: Deployment Summary
+      - name: Summary
         run: |
           echo "🎉 Full deployment complete!"
           echo "  ✅ Space 1 — Ingest & Profile"
