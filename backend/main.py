@@ -5,6 +5,7 @@ Fixed CORS middleware for all FastAPI versions
 
 from __future__ import annotations
 
+import math
 import os
 import uuid
 import httpx
@@ -27,12 +28,11 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, R
 from fastapi.responses import HTMLResponse, JSONResponse
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# App — NO middleware, manual CORS headers instead
+# App
 # ═══════════════════════════════════════════════════════════════════════════════
 
 app = FastAPI(title="AI Pipeline — Orchestrator")
 
-# ── Manual CORS — works with ALL FastAPI versions ─────────────────────────────
 @app.middleware("http")
 async def add_cors(request: Request, call_next):
     if request.method == "OPTIONS":
@@ -94,6 +94,21 @@ PROGRESS = {
     STATUS_COMPLETED: 100,
     STATUS_FAILED:    0,
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NaN sanitizer — must run before ANY json= call
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sanitize(obj):
+    """Recursively replace nan/inf with None for JSON compliance."""
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Routes
@@ -238,12 +253,12 @@ def _run_pipeline(
             print(f"[{run_id[:8]}] 🧹 Calling Space 2...")
             resp2 = client.post(
                 f"{SPACE_2_URL}/run",
-                json={
+                json=_sanitize({
                     "data":         full_data,
                     "schema":       s1["schema"],
                     "target_col":   target_col,
                     "problem_type": problem_type,
-                },
+                }),
             )
             _check(resp2, "Space 2")
             s2 = resp2.json()
@@ -254,13 +269,13 @@ def _run_pipeline(
             print(f"[{run_id[:8]}] 🏋️ Calling Space 3...")
             resp3 = client.post(
                 f"{SPACE_3_URL}/run",
-                json={
+                json=_sanitize({
                     "X":              s2["X"],
                     "y":              s2["y"],
                     "feature_names":  s2["feature_names"],
                     "problem_type":   problem_type,
                     "target_classes": s2.get("target_classes", []),
-                },
+                }),
             )
             _check(resp3, "Space 3")
             s3 = resp3.json()
@@ -271,7 +286,7 @@ def _run_pipeline(
             print(f"[{run_id[:8]}] 📄 Calling Space 4...")
             resp4 = client.post(
                 f"{SPACE_4_URL}/run",
-                json={
+                json=_sanitize({
                     "run_id":              run_id,
                     "filename":            filename,
                     "rows":                s1["rows"],
@@ -283,20 +298,20 @@ def _run_pipeline(
                     "engineering_report":  s2["engineering_report"],
                     "model_result":        s3,
                     "feature_importances": s3.get("feature_importances", {}),
-                },
+                }),
             )
             _check(resp4, "Space 4")
             s4 = resp4.json()
             print(f"[{run_id[:8]}] ✅ Space 4 done")
 
-            full_result = {
+            full_result = _sanitize({
                 "ingestion":   s1,
                 "cleaning":    s2,
                 "training":    s3,
                 "reporting":   s4,
                 "html_report": s4.get("html_report"),
                 "json_report": s4.get("json_report"),
-            }
+            })
             _db_complete(run_id, full_result, s1.get("quality_score", 0))
             print(f"[{run_id[:8]}] 🎉 COMPLETED\n")
 
@@ -341,7 +356,8 @@ def _parse_full_file(content: bytes, ext: str, filename: str) -> list[dict]:
             for c in df.columns
         ]
         df = df.loc[:, ~df.columns.str.match(r"^unnamed")]
-        return df.where(df.notna(), other=None).to_dict(orient="records")
+        records = df.where(df.notna(), other=None).to_dict(orient="records")
+        return _sanitize(records)
 
     except Exception as e:
         print(f"⚠️ Parse error: {e}")
