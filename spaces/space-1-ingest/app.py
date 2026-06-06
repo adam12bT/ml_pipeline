@@ -14,30 +14,26 @@ from __future__ import annotations
 
 import io
 import json
+import math
 import re
-import uuid
 import chardet
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi import Request
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.responses import JSONResponse
 from scipy import stats as scipy_stats
 from sklearn.feature_selection import mutual_info_classif, mutual_info_regression
 from sklearn.preprocessing import LabelEncoder
-from pydantic import BaseModel
 from typing import Any, Optional
 
 
 app = FastAPI(title="AI Pipeline — Space 1: Ingest & Profile")
 
 
-
 @app.middleware("http")
 async def add_cors(request, call_next):
-    from fastapi.responses import JSONResponse
     if request.method == "OPTIONS":
         return JSONResponse(content={}, headers={
             "Access-Control-Allow-Origin": "*",
@@ -61,6 +57,7 @@ POSITIVE_KEYWORDS = {
     "fraud":0.95,"risk":0.85,"default":0.9,"diagnosis":0.9,"status":0.75,
     "price":0.85,"revenue":0.85,"sales":0.8,"salary":0.8,"score":0.75,
     "survival":0.9,"approved":0.8,"converted":0.8,"purchased":0.8,"y":0.5,
+    "survived":0.95,"left":0.8,"attrition":0.9,"result":0.75,"outcome":0.9,
 }
 NEGATIVE_KEYWORDS = {
     "id","uuid","guid","pk","key","created_at","updated_at","timestamp",
@@ -96,21 +93,38 @@ async def run_ingest(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
 
-    schema   = _analyse_schema(df)
-    target   = _detect_target(df, schema)
-    quality  = _quality_score(schema)
+    schema  = _analyse_schema(df)
+    target  = _detect_target(df, schema)
+    quality = _quality_score(schema)
 
-    return {
+    sample_df = df.head(5)
+    result = {
         "rows":    len(df),
         "columns": len(df.columns),
         "schema":  schema,
         "target_detection": target,
         "quality_score": quality,
-        "sample":  df.head(5).to_dict(orient="records"),
-        # Pass cleaned column list to next space
+        "sample":  sample_df.where(sample_df.notna(), other=None).to_dict(orient="records"),
         "column_names": list(df.columns),
         "dtypes": {col: str(df[col].dtype) for col in df.columns},
     }
+
+    return JSONResponse(content=_sanitize(result))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NaN / Inf sanitizer
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sanitize(obj):
+    """Recursively replace nan/inf with None for JSON compliance."""
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    return obj
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -210,9 +224,9 @@ def _analyse_schema(df: pd.DataFrame) -> dict:
 
 
 def _infer_type(s: pd.Series) -> str:
-    if pd.api.types.is_bool_dtype(s):      return "boolean"
+    if pd.api.types.is_bool_dtype(s):           return "boolean"
     if pd.api.types.is_datetime64_any_dtype(s): return "datetime"
-    if pd.api.types.is_numeric_dtype(s):   return "numeric"
+    if pd.api.types.is_numeric_dtype(s):        return "numeric"
     sample = s.dropna().astype(str)
     if sample.empty: return "unknown"
     if sample.str.match(_RE_UUID).mean()  > 0.8: return "uuid"
@@ -221,7 +235,8 @@ def _infer_type(s: pd.Series) -> str:
     try:
         if pd.to_numeric(sample, errors="coerce").notna().mean() > 0.9:
             return "numeric"
-    except Exception: pass
+    except Exception:
+        pass
     lower = set(sample.str.lower().unique())
     if lower.issubset({"true","false","yes","no","1","0","t","f","y","n"}):
         return "boolean"
@@ -312,14 +327,14 @@ def _statistical(col: str, df: pd.DataFrame, all_cols: list) -> float:
             if col_data.dtype == "object":
                 col_data = LabelEncoder().fit_transform(col_data.astype(str).fillna("NA"))
             else:
-                col_data = pd.to_numeric(col_data,errors="coerce").fillna(0).values
+                col_data = pd.to_numeric(col_data, errors="coerce").fillna(0).values
             parts.append(np.array(col_data).reshape(-1,1))
         if not parts: return 0.5
         X = np.hstack(parts)
         y = df[col]
         n_unique = y.nunique()
         if n_unique > 20:
-            y_enc = pd.to_numeric(y,errors="coerce").fillna(0).values
+            y_enc = pd.to_numeric(y, errors="coerce").fillna(0).values
             mi = mutual_info_regression(X, y_enc, random_state=42)
         else:
             y_enc = LabelEncoder().fit_transform(y.astype(str).fillna("NA"))
@@ -332,18 +347,17 @@ def _statistical(col: str, df: pd.DataFrame, all_cols: list) -> float:
 
 def _positional(i: int, n: int) -> float:
     if n <= 1: return 0.5
-    import math
     return float(np.clip(math.exp(-3*(1-i/(n-1))**2), 0, 1))
 
 
 def _problem_type(series: pd.Series, info: dict) -> str:
     n_unique = info.get("unique_count", series.nunique())
     col_type = info.get("inferred_type","")
-    if col_type == "datetime":    return "time_series"
+    if col_type == "datetime":              return "time_series"
     if col_type == "numeric" and n_unique > 20: return "regression"
-    if n_unique == 2:             return "binary_classification"
-    if 3 <= n_unique <= 50:       return "multiclass_classification"
-    if col_type == "numeric":     return "regression"
+    if n_unique == 2:                       return "binary_classification"
+    if 3 <= n_unique <= 50:                 return "multiclass_classification"
+    if col_type == "numeric":               return "regression"
     return "binary_classification"
 
 
