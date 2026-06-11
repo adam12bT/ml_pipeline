@@ -1,7 +1,6 @@
 """
 Space 3 — Train & Evaluate
 Hugging Face Space: your-username/ai-pipeline-train
-
 Responsibilities:
   - Receive cleaned X and y from Render backend
   - Train multiple ML models (LogReg, RF, XGBoost, LightGBM, CatBoost)
@@ -13,6 +12,7 @@ Responsibilities:
 
 from __future__ import annotations
 
+import math
 import time
 from typing import Any, Optional
 
@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import cross_val_score, train_test_split
+from sklearn.preprocessing import LabelEncoder
 from sklearn.metrics import (
     accuracy_score, f1_score, mean_absolute_error,
     mean_squared_error, precision_score, r2_score,
@@ -33,8 +34,6 @@ from sklearn.metrics import (
 
 
 app = FastAPI(title="AI Pipeline — Space 3: Train & Evaluate")
-
-
 
 
 @app.middleware("http")
@@ -52,6 +51,7 @@ async def add_cors(request, call_next):
     response.headers["Access-Control-Allow-Headers"] = "*"
     return response
 
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Request model
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -65,6 +65,23 @@ class TrainRequest(BaseModel):
     test_size: float = 0.2
     cv_folds: int = 5
     random_state: int = 42
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _sanitize(obj: Any) -> Any:
+    """Recursively replace nan/inf with None so json.dumps never chokes."""
+    if isinstance(obj, float):
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize(v) for v in obj]
+    return obj
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,8 +109,19 @@ def run_train(req: TrainRequest):
     # Replace any inf/nan that slipped through
     X = X.replace([np.inf, -np.inf], np.nan).fillna(0)
 
-    # Train/test split
     is_clf = req.problem_type in ("binary_classification", "multiclass_classification")
+
+    # FIX 1: Re-encode class labels to a compact 0..N-1 range.
+    # XGBoost requires labels to be exactly [0, 1, ..., n_classes-1].
+    # A stratified split may drop a rare class from a fold, producing gaps
+    # like [0, 1, 2, 4], which XGBoost rejects.  LabelEncoder guarantees
+    # contiguous integers regardless of what values arrive.
+    le: Optional[LabelEncoder] = None
+    if is_clf:
+        le = LabelEncoder()
+        y = le.fit_transform(y)
+
+    # Train/test split
     try:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y,
@@ -108,7 +136,7 @@ def run_train(req: TrainRequest):
 
     # Get models for this task
     models = _get_models(req.problem_type, req.random_state)
-    all_metrics = []
+    all_metrics: list[dict] = []
     best_model_obj = None
     best_score = -np.inf
 
@@ -123,7 +151,7 @@ def run_train(req: TrainRequest):
             best_score = score
             best_model_obj = model
 
-    # Sort by primary score
+    # Sort by primary score descending
     all_metrics.sort(
         key=lambda m: _primary_score(m, req.problem_type), reverse=True
     )
@@ -131,18 +159,32 @@ def run_train(req: TrainRequest):
 
     # Get predictions + feature importances from best model
     y_pred = best_model_obj.predict(X_test).tolist()
+
+    # Decode labels back to original values for the caller
+    if le is not None:
+        y_pred   = le.inverse_transform(np.array(y_pred, dtype=int)).tolist()
+        y_test   = le.inverse_transform(y_test.astype(int)).tolist()
+    else:
+        y_test = y_test.tolist()
+
     feature_importances = _get_importances(best_model_obj, req.feature_names)
 
-    return {
+    result = {
         "best_model": best_name,
         "best_score": round(best_score, 4),
         "models": all_metrics,
         "feature_importances": feature_importances,
         "test_predictions": y_pred,
-        "test_actuals": y_test.tolist(),
+        "test_actuals": y_test,
         "problem_type": req.problem_type,
         "target_classes": req.target_classes,
     }
+
+    # FIX 2: Scrub any nan / inf that survived into the response dict.
+    # This prevents the "Out of range float values are not JSON compliant: nan"
+    # crash that occurs when a CV fold fails and sklearn returns nan for that
+    # fold's score, which then propagates into cv_mean / cv_std.
+    return JSONResponse(content=_sanitize(result))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -229,27 +271,34 @@ def _train_evaluate(
     start = time.time()
     is_clf = problem_type in ("binary_classification", "multiclass_classification")
 
-    # Cross-validation
-    cv_metric = "roc_auc" if problem_type == "binary_classification" \
-        else "f1_weighted" if problem_type == "multiclass_classification" \
+    cv_metric = (
+        "roc_auc"     if problem_type == "binary_classification"
+        else "f1_weighted" if problem_type == "multiclass_classification"
         else "r2"
+    )
+
     try:
         cv_scores = cross_val_score(
             model, X_train, y_train, cv=cv_folds,
             scoring=cv_metric, n_jobs=-1,
         )
-        cv_mean = float(np.mean(cv_scores))
-        cv_std  = float(np.std(cv_scores))
+        # FIX 2 (partial): drop any nan folds produced by failed fits before
+        # computing mean/std so we never store nan in the metrics dict.
+        valid_scores = cv_scores[~np.isnan(cv_scores)]
+        cv_mean = float(np.mean(valid_scores)) if len(valid_scores) else 0.0
+        cv_std  = float(np.std(valid_scores))  if len(valid_scores) else 0.0
     except Exception:
         cv_mean, cv_std = 0.0, 0.0
 
-    # Final fit
+    # Final fit on full training split
     try:
         model.fit(X_train, y_train)
     except Exception as e:
         return {
-            "model_name": name, "error": str(e),
-            "cv_score_mean": cv_mean, "cv_score_std": cv_std,
+            "model_name": name,
+            "error": str(e),
+            "cv_score_mean": cv_mean,
+            "cv_score_std": cv_std,
             "training_time_seconds": round(time.time() - start, 2),
         }
 
