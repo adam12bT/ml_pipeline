@@ -1,12 +1,15 @@
 """
 Render Backend — FastAPI Orchestrator
 Fixed CORS middleware for all FastAPI versions
++ Space pause/resume to stay within HF free-tier CPU quota
 """
 
 from __future__ import annotations
 
+import asyncio
 import math
 import os
+import time
 import uuid
 import httpx
 from datetime import datetime
@@ -60,6 +63,17 @@ SPACE_4_URL   = os.environ.get("SPACE_4_URL", "http://localhost:7864")
 MAX_FILE_MB   = int(os.environ.get("MAX_FILE_MB", "200"))
 HF_TOKEN      = os.environ.get("HF_TOKEN", "")
 
+# HF username + space names (must match your HF repo slugs exactly)
+HF_USER       = os.environ.get("HF_USER", "your-username")
+SPACE_1_NAME  = os.environ.get("SPACE_1_NAME", "ai-pipeline-ingest")
+SPACE_2_NAME  = os.environ.get("SPACE_2_NAME", "ai-pipeline-features")
+SPACE_3_NAME  = os.environ.get("SPACE_3_NAME", "ai-pipeline-train")
+SPACE_4_NAME  = os.environ.get("SPACE_4_NAME", "ai-pipeline-report")
+
+# How long (seconds) to wait after resuming before hitting /run
+# Increase if your Spaces are slow to cold-start
+SPACE_BOOT_WAIT = int(os.environ.get("SPACE_BOOT_WAIT", "20"))
+
 # ── Supabase client ───────────────────────────────────────────────────────────
 supabase = None
 if SUPABASE_AVAILABLE and SUPABASE_URL and SUPABASE_KEY:
@@ -108,6 +122,44 @@ def _sanitize(obj):
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
     return obj
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Space pause / resume helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _hf_set_space_state(space_name: str, action: str) -> None:
+    """
+    Call the HF API to pause or restart a Space.
+    action must be 'pause' or 'restart'.
+    Silently skips if HF_TOKEN is not set (local dev mode).
+    """
+    if not HF_TOKEN:
+        print(f"  ⚠️  HF_TOKEN not set — skipping {action} for {space_name}")
+        return
+    url = f"https://huggingface.co/api/spaces/{HF_USER}/{space_name}/{action}"
+    try:
+        r = httpx.post(url, headers={"Authorization": f"Bearer {HF_TOKEN}"}, timeout=30)
+        if r.status_code in (200, 204):
+            icon = "⏸️" if action == "pause" else "▶️"
+            print(f"  {icon}  {action.capitalize()}d Space: {space_name}")
+        else:
+            # Non-fatal — log and continue so the pipeline doesn't break
+            print(f"  ⚠️  {action} {space_name} → HTTP {r.status_code}: {r.text[:120]}")
+    except Exception as e:
+        print(f"  ⚠️  {action} {space_name} failed (non-fatal): {e}")
+
+
+def _pause_space(space_name: str) -> None:
+    _hf_set_space_state(space_name, "pause")
+
+
+def _resume_space(space_name: str) -> None:
+    """Resume a Space and wait for it to boot before returning."""
+    _hf_set_space_state(space_name, "restart")
+    if HF_TOKEN:
+        print(f"  ⏳  Waiting {SPACE_BOOT_WAIT}s for {space_name} to boot…")
+        time.sleep(SPACE_BOOT_WAIT)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -214,7 +266,7 @@ def list_runs():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Pipeline
+# Pipeline  (one Space running at a time)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _run_pipeline(
@@ -227,16 +279,19 @@ def _run_pipeline(
     try:
         with httpx.Client(timeout=TIMEOUT, headers=http_headers) as client:
 
-            # Space 1
+            # ── Space 1 ──────────────────────────────────────────────────────
             _db_update(run_id, STATUS_INGESTING)
-            print(f"\n[{run_id[:8]}] 📂 Calling Space 1...")
+            _resume_space(SPACE_1_NAME)
+            print(f"\n[{run_id[:8]}] 📂 Calling Space 1…")
             resp1 = client.post(
                 f"{SPACE_1_URL}/run",
                 files={"file": (filename, content, _mime(ext))},
             )
             _check(resp1, "Space 1")
             s1 = resp1.json()
-            print(f"[{run_id[:8]}] ✅ Space 1 done — {s1['rows']} rows, target='{s1['target_detection']['predicted_target']}'")
+            print(f"[{run_id[:8]}] ✅ Space 1 done — {s1['rows']} rows, "
+                  f"target='{s1['target_detection']['predicted_target']}'")
+            _pause_space(SPACE_1_NAME)
 
             if target_override:
                 s1["target_detection"]["predicted_target"] = target_override
@@ -244,13 +299,14 @@ def _run_pipeline(
             target_col   = s1["target_detection"]["predicted_target"]
             problem_type = s1["target_detection"]["problem_type"]
 
-            # Parse full file
+            # Parse full file (CPU work on Render, no Space needed)
             full_data = _parse_full_file(content, ext, filename)
             print(f"[{run_id[:8]}] 📊 Full dataset: {len(full_data)} rows")
 
-            # Space 2
+            # ── Space 2 ──────────────────────────────────────────────────────
             _db_update(run_id, STATUS_CLEANING)
-            print(f"[{run_id[:8]}] 🧹 Calling Space 2...")
+            _resume_space(SPACE_2_NAME)
+            print(f"[{run_id[:8]}] 🧹 Calling Space 2…")
             resp2 = client.post(
                 f"{SPACE_2_URL}/run",
                 json=_sanitize({
@@ -262,11 +318,15 @@ def _run_pipeline(
             )
             _check(resp2, "Space 2")
             s2 = resp2.json()
-            print(f"[{run_id[:8]}] ✅ Space 2 done — {s2['engineering_report']['engineered_features']} features, {len(s2['X'])} rows")
+            print(f"[{run_id[:8]}] ✅ Space 2 done — "
+                  f"{s2['engineering_report']['engineered_features']} features, "
+                  f"{len(s2['X'])} rows")
+            _pause_space(SPACE_2_NAME)
 
-            # Space 3
+            # ── Space 3 ──────────────────────────────────────────────────────
             _db_update(run_id, STATUS_TRAINING)
-            print(f"[{run_id[:8]}] 🏋️ Calling Space 3...")
+            _resume_space(SPACE_3_NAME)
+            print(f"[{run_id[:8]}] 🏋️ Calling Space 3…")
             resp3 = client.post(
                 f"{SPACE_3_URL}/run",
                 json=_sanitize({
@@ -279,11 +339,14 @@ def _run_pipeline(
             )
             _check(resp3, "Space 3")
             s3 = resp3.json()
-            print(f"[{run_id[:8]}] ✅ Space 3 done — best={s3['best_model']} score={s3['best_score']}")
+            print(f"[{run_id[:8]}] ✅ Space 3 done — "
+                  f"best={s3['best_model']} score={s3['best_score']}")
+            _pause_space(SPACE_3_NAME)
 
-            # Space 4
+            # ── Space 4 ──────────────────────────────────────────────────────
             _db_update(run_id, STATUS_REPORTING)
-            print(f"[{run_id[:8]}] 📄 Calling Space 4...")
+            _resume_space(SPACE_4_NAME)
+            print(f"[{run_id[:8]}] 📄 Calling Space 4…")
             resp4 = client.post(
                 f"{SPACE_4_URL}/run",
                 json=_sanitize({
@@ -303,7 +366,9 @@ def _run_pipeline(
             _check(resp4, "Space 4")
             s4 = resp4.json()
             print(f"[{run_id[:8]}] ✅ Space 4 done")
+            _pause_space(SPACE_4_NAME)
 
+            # ── Done ─────────────────────────────────────────────────────────
             full_result = _sanitize({
                 "ingestion":   s1,
                 "cleaning":    s2,
@@ -318,6 +383,9 @@ def _run_pipeline(
     except Exception as exc:
         print(f"[{run_id[:8]}] ❌ FAILED: {exc}")
         _db_fail(run_id, str(exc))
+        # Best-effort: pause whichever Space might still be running
+        for name in (SPACE_1_NAME, SPACE_2_NAME, SPACE_3_NAME, SPACE_4_NAME):
+            _pause_space(name)
 
 
 def _parse_full_file(content: bytes, ext: str, filename: str) -> list[dict]:
